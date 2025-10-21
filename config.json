@@ -1,0 +1,22 @@
+{
+  "version": "1.0.0",
+  "default_vm": "MyVM",
+  "update_interval": 5,
+  "demo_mode": true,
+  "location": {
+    "default_latitude": 37.7749,
+    "default_longitude": -122.4194,
+    "simulation_variance": 0.01
+  },
+  "guest_properties": {
+    "base_path": "/VirtualBox/GuestInfo/GPS",
+    "keys": {
+      "location": "Location",
+      "latitude": "Latitude",
+      "longitude": "Longitude",
+      "altitude": "Altitude",
+      "accuracy": "Accuracy",
+      "timestamp": "Timestamp"
+    }
+  }
+}
