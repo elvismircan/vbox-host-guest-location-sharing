@@ -33,10 +33,14 @@ The project includes:
 - Implemented VirtualBox Guest Properties integration with dual approach:
   - VirtualBox Python SDK support with proper session locking
   - VBoxManage CLI fallback for systems without SDK
+- **Added network mode (HTTP server) for macOS guest support**
+  - HTTP server on host serves GPS data as JSON
+  - Guest client can connect via HTTP (no Guest Additions needed)
+  - Perfect for macOS guests where Guest Additions don't work
 - Added demo mode with simulated GPS data
 - Created interactive demo script (`demo.py`)
 - Added configuration file support (`config.json`)
-- Wrote comprehensive documentation (README, INSTALLATION, USAGE guides)
+- Wrote comprehensive documentation (README, INSTALLATION, USAGE, MACOS_GUIDE)
 - Set up development workflow for testing
 - Fixed LSP type checking errors
 - Fixed critical production mode issues identified by architect review

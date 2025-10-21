@@ -11,21 +11,32 @@ This plugin consists of two components:
 ## Features
 
 - ✅ Real-time GPS location sharing from host to guest
+- ✅ **macOS guest support** via network mode (HTTP)
+- ✅ Dual-mode operation: Guest Properties + HTTP network mode
 - ✅ Supports latitude, longitude, altitude, and accuracy
 - ✅ Configurable update intervals
 - ✅ Demo mode with simulated GPS data for testing
-- ✅ Platform-agnostic protocol using VirtualBox Guest Properties
+- ✅ Works with or without VirtualBox Guest Additions
 - ✅ Simple command-line interface
 - ✅ Automatic timestamp tracking
 
 ## How It Works
 
-The plugin uses **VirtualBox Guest Properties** as a communication channel:
+The plugin supports **two communication methods**:
 
+### Method 1: Guest Properties (Linux/Windows guests)
 1. The host service reads GPS location data from the system
 2. It stores the location in VirtualBox guest properties (e.g., `/VirtualBox/GuestInfo/GPS/Location`)
-3. The guest client reads these properties from inside the VM
-4. Location updates happen at configurable intervals (default: 5 seconds)
+3. The guest client reads these properties using VBoxControl
+4. Requires VirtualBox Guest Additions
+
+### Method 2: Network Mode (macOS/all guests) 
+1. The host service starts an HTTP server (default port: 8089)
+2. It serves GPS data as JSON via HTTP endpoint
+3. The guest client connects via HTTP and retrieves location data
+4. Works **without Guest Additions** - perfect for macOS guests!
+
+Both methods can run simultaneously, providing maximum compatibility.
 
 ## Requirements
 
@@ -35,8 +46,9 @@ The plugin uses **VirtualBox Guest Properties** as a communication channel:
 - VirtualBox SDK for Python (optional, provides better performance)
 
 ### Guest VM
-- VirtualBox Guest Additions installed
-- Python 3.7+ (for the Python client)
+- Python 3.7+
+- **For Linux/Windows guests:** VirtualBox Guest Additions (recommended)
+- **For macOS guests:** Network connectivity to host (no Guest Additions needed)
 
 ## Installation
 
@@ -73,9 +85,13 @@ sudo apt-get install virtualbox-guest-utils
 python vbox_gps_host.py --demo --vm "MyVM" --interval 5
 ```
 
-**Production Mode (with real GPS):**
+**Production Mode:**
 ```bash
+# Standard mode (Guest Properties + Network)
 python vbox_gps_host.py --vm "MyVM" --interval 10
+
+# Network-only mode (for macOS guests)
+python vbox_gps_host.py --demo --port 8089
 ```
 
 **Command-line options:**
@@ -87,20 +103,32 @@ python vbox_gps_host.py --vm "MyVM" --interval 10
 
 **Inside the guest VM:**
 
-**Demo Mode:**
+**For macOS guests (network mode - REQUIRED):**
 ```bash
-python vbox_gps_guest.py --demo --interval 5
+python vbox_gps_guest.py --host 192.168.56.1
 ```
 
-**Production Mode:**
+**For Linux/Windows guests (Guest Properties):**
 ```bash
 python vbox_gps_guest.py --interval 5
 ```
 
+**For Linux/Windows guests (network mode):**
+```bash
+python vbox_gps_guest.py --host 192.168.56.1 --interval 5
+```
+
+**Demo Mode:**
+```bash
+python vbox_gps_guest.py --demo
+```
+
 **Get location once and exit:**
 ```bash
-python vbox_gps_guest.py --once
+python vbox_gps_guest.py --host 192.168.56.1 --once
 ```
+
+> **Note for macOS users:** See [MACOS_GUIDE.md](MACOS_GUIDE.md) for detailed setup instructions including how to find your host IP address.
 
 **Command-line options:**
 - `--demo`: Run in demo mode
@@ -173,15 +201,36 @@ The GPS location data is shared in JSON format:
 - `/VirtualBox/GuestInfo/GPS/Longitude` - Longitude value only
 - `/VirtualBox/GuestInfo/GPS/Timestamp` - Last update timestamp
 
-## Platform-Specific GPS Sources
+## Guest OS Support
 
-The plugin is designed to support real GPS data from various platforms:
+### ✅ Fully Supported
 
-- **Windows**: Windows Location API
-- **Linux**: GeoClue D-Bus service
-- **macOS**: CoreLocation framework
+| Guest OS | Method | Guest Additions Required |
+|----------|--------|-------------------------|
+| **Linux** | Guest Properties or Network | Yes (for Guest Properties) |
+| **Windows** | Guest Properties or Network | Yes (for Guest Properties) |
+| **macOS** | **Network Mode Only** | **No** |
+| **FreeBSD** | Guest Properties or Network | Yes (for Guest Properties) |
 
-*Note: Real GPS integration requires additional platform-specific setup and is currently in development. Use demo mode for testing.*
+### macOS Guest Support
+
+macOS guests work via **network mode** because VirtualBox Guest Additions are not fully supported on macOS. This is actually an advantage:
+- ✅ No fighting with macOS security settings
+- ✅ No kernel extensions needed
+- ✅ Works on all macOS versions
+- ✅ Simple HTTP protocol
+
+**See the complete [macOS Guest Quick Start Guide](MACOS_GUIDE.md) for details.**
+
+## Platform-Specific GPS Sources (Host)
+
+The plugin can capture real GPS data from various host platforms:
+
+- **Windows**: Windows Location API (planned)
+- **Linux**: GeoClue D-Bus service (planned)
+- **macOS**: CoreLocation framework (planned)
+
+*Note: Real GPS integration is planned for future releases. Currently uses simulated GPS data for testing.*
 
 ## Troubleshooting
 

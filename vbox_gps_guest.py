@@ -10,14 +10,22 @@ import argparse
 import subprocess
 from datetime import datetime
 from typing import Optional, Dict
+from urllib.request import urlopen
+from urllib.error import URLError
 
 
 class VBoxGPSClient:
     """Client to receive GPS data from VirtualBox host"""
     
-    def __init__(self, demo_mode: bool = False):
+    def __init__(self, demo_mode: bool = False, host: Optional[str] = None, port: int = 8089):
         self.demo_mode = demo_mode
+        self.host = host
+        self.port = port
+        self.network_mode = host is not None
         self.last_location = None
+        
+        if self.network_mode:
+            print(f"Network mode: Will connect to http://{self.host}:{self.port}/gps")
     
     def get_guest_property(self, key: str) -> Optional[str]:
         """Get a guest property value using VBoxControl"""
@@ -69,8 +77,33 @@ class VBoxGPSClient:
         
         return None
     
+    def _get_location_via_http(self) -> Optional[Dict]:
+        """Get GPS location via HTTP (for macOS guests or network mode)"""
+        if not self.host:
+            return None
+        
+        try:
+            url = f"http://{self.host}:{self.port}/gps"
+            with urlopen(url, timeout=5) as response:
+                data = response.read().decode('utf-8')
+                location = json.loads(data)
+                self.last_location = location
+                return location
+        except URLError as e:
+            print(f"Network error: {e}. Is the host service running?")
+            return None
+        except json.JSONDecodeError as e:
+            print(f"Error parsing location JSON: {e}")
+            return None
+        except Exception as e:
+            print(f"Error fetching GPS data via HTTP: {e}")
+            return None
+    
     def get_location(self) -> Optional[Dict]:
         """Get current GPS location from host"""
+        if self.network_mode:
+            return self._get_location_via_http()
+        
         location_json = self.get_guest_property("/VirtualBox/GuestInfo/GPS/Location")
         
         if location_json:
@@ -96,12 +129,18 @@ class VBoxGPSClient:
     
     def run(self, interval: int = 5, continuous: bool = True):
         """Main client loop"""
-        print("=" * 60)
+        print("=" * 70)
         print("VirtualBox GPS Guest Client")
-        print("=" * 60)
+        print("=" * 70)
         print(f"Mode: {'DEMO' if self.demo_mode else 'PRODUCTION'}")
+        if self.network_mode:
+            print(f"Connection: HTTP (http://{self.host}:{self.port}/gps)")
+            print(f"  ✓ Compatible with macOS guests")
+        else:
+            print(f"Connection: VirtualBox Guest Properties (VBoxControl)")
+            print(f"  ⚠ Requires Guest Additions (Linux/Windows only)")
         print(f"Update Interval: {interval} seconds")
-        print("=" * 60)
+        print("=" * 70)
         print("\nListening for GPS location updates...")
         print("Press Ctrl+C to stop\n")
         
@@ -133,6 +172,18 @@ def main():
         help='Run in demo mode'
     )
     parser.add_argument(
+        '--host',
+        type=str,
+        default=None,
+        help='Host IP address for network mode (required for macOS guests)'
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=8089,
+        help='HTTP port for network mode (default: 8089)'
+    )
+    parser.add_argument(
         '--interval',
         type=int,
         default=5,
@@ -146,7 +197,7 @@ def main():
     
     args = parser.parse_args()
     
-    client = VBoxGPSClient(demo_mode=args.demo)
+    client = VBoxGPSClient(demo_mode=args.demo, host=args.host, port=args.port)
     client.run(interval=args.interval, continuous=not args.once)
 
 

@@ -9,8 +9,11 @@ import json
 import argparse
 import random
 import subprocess
+import threading
 from datetime import datetime
 from typing import Dict, Optional
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse
 
 try:
     import vboxapi  # type: ignore
@@ -98,19 +101,93 @@ class GPSLocationProvider:
         }
 
 
+class GPSHTTPHandler(BaseHTTPRequestHandler):
+    """HTTP handler for serving GPS data"""
+    
+    gps_service = None  # Will be set by VBoxGPSService
+    
+    def do_GET(self):
+        """Handle GET requests"""
+        parsed_path = urlparse(self.path)
+        
+        if parsed_path.path == '/gps' or parsed_path.path == '/gps/location':
+            if self.server.gps_service:  # type: ignore
+                location = self.server.gps_service.gps.get_location()  # type: ignore
+                
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                
+                self.wfile.write(json.dumps(location).encode('utf-8'))
+            else:
+                self.send_error(503, "GPS service not available")
+        elif parsed_path.path == '/':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.end_headers()
+            
+            html = """
+            <html>
+            <head><title>VirtualBox GPS Service</title></head>
+            <body>
+            <h1>VirtualBox GPS Service</h1>
+            <p>GPS location endpoint: <a href="/gps">/gps</a></p>
+            </body>
+            </html>
+            """
+            self.wfile.write(html.encode('utf-8'))
+        else:
+            self.send_error(404, "Endpoint not found")
+    
+    def log_message(self, format, *args):
+        """Suppress HTTP request logging"""
+        pass
+
+
 class VBoxGPSService:
     """VirtualBox GPS sharing service"""
     
-    def __init__(self, vm_name: str, demo_mode: bool = False, interval: int = 5):
+    def __init__(self, vm_name: str, demo_mode: bool = False, interval: int = 5, 
+                 network_mode: bool = True, http_port: int = 8089):
         self.vm_name = vm_name
         self.demo_mode = demo_mode
         self.interval = interval
+        self.network_mode = network_mode
+        self.http_port = http_port
         self.gps = GPSLocationProvider(demo_mode=demo_mode)
         self.vbox = None
         self.machine = None
+        self.http_server = None
+        self.http_thread = None
         
         if VBOX_AVAILABLE and not demo_mode:
             self._init_vbox()
+        
+        if network_mode:
+            self._start_http_server()
+    
+    def _start_http_server(self):
+        """Start HTTP server for network-based GPS sharing"""
+        try:
+            self.http_server = HTTPServer(('0.0.0.0', self.http_port), GPSHTTPHandler)
+            self.http_server.gps_service = self  # type: ignore
+            
+            self.http_thread = threading.Thread(target=self.http_server.serve_forever, daemon=True)
+            self.http_thread.start()
+            
+            print(f"✓ HTTP server started on port {self.http_port}")
+            print(f"  Guest can access GPS at: http://<host-ip>:{self.http_port}/gps")
+        except Exception as e:
+            print(f"Warning: Failed to start HTTP server: {e}")
+            print("GPS will only be available via Guest Properties")
+            self.network_mode = False
+    
+    def _stop_http_server(self):
+        """Stop HTTP server"""
+        if self.http_server:
+            self.http_server.shutdown()
+            print("HTTP server stopped")
     
     def _init_vbox(self):
         """Initialize VirtualBox connection"""
@@ -118,7 +195,7 @@ class VBoxGPSService:
             if vboxapi is not None:
                 self.vbox = vboxapi.VirtualBoxManager(None, None)  # type: ignore
                 self.machine = self.vbox.vbox.findMachine(self.vm_name)  # type: ignore
-                print(f"Connected to VirtualBox VM via SDK: {self.vm_name}")
+                print(f"✓ Connected to VirtualBox VM via SDK: {self.vm_name}")
         except Exception as e:
             print(f"Warning: VirtualBox SDK initialization failed: {e}")
             print("Will use VBoxManage CLI as fallback for guest property operations")
@@ -194,34 +271,44 @@ class VBoxGPSService:
         location = self.gps.get_location()
         location_json = json.dumps(location)
         
-        self.set_guest_property("/VirtualBox/GuestInfo/GPS/Location", location_json)
-        self.set_guest_property("/VirtualBox/GuestInfo/GPS/Latitude", str(location['latitude']))
-        self.set_guest_property("/VirtualBox/GuestInfo/GPS/Longitude", str(location['longitude']))
-        self.set_guest_property("/VirtualBox/GuestInfo/GPS/Timestamp", location['timestamp'])
+        # Update via Guest Properties (for Linux/Windows guests)
+        if not self.demo_mode:
+            self.set_guest_property("/VirtualBox/GuestInfo/GPS/Location", location_json)
+            self.set_guest_property("/VirtualBox/GuestInfo/GPS/Latitude", str(location['latitude']))
+            self.set_guest_property("/VirtualBox/GuestInfo/GPS/Longitude", str(location['longitude']))
+            self.set_guest_property("/VirtualBox/GuestInfo/GPS/Timestamp", location['timestamp'])
+        
+        # HTTP server provides data automatically (for macOS and all guests)
         
         print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] GPS Update:")
         print(f"  Location: {location['latitude']}, {location['longitude']}")
         print(f"  Altitude: {location.get('altitude', 'N/A')} m")
         print(f"  Accuracy: {location.get('accuracy', 'N/A')} m")
         print(f"  Source: {location.get('source', 'unknown')}")
+        if self.network_mode:
+            print(f"  Available via HTTP: http://<host-ip>:{self.http_port}/gps")
         
         return location
     
     def run(self):
         """Main service loop"""
-        print("=" * 60)
+        print("=" * 70)
         print("VirtualBox GPS Host Service")
-        print("=" * 60)
+        print("=" * 70)
         print(f"VM Name: {self.vm_name}")
         print(f"Mode: {'DEMO' if self.demo_mode else 'PRODUCTION'}")
         print(f"Update Interval: {self.interval} seconds")
         print(f"VirtualBox SDK: {'Available' if VBOX_AVAILABLE else 'Not Available'}")
         if not self.demo_mode:
             if VBOX_AVAILABLE and self.vbox is not None:
-                print(f"Method: SDK (with VBoxManage CLI fallback)")
+                print(f"Guest Properties: SDK (with VBoxManage CLI fallback)")
             else:
-                print(f"Method: VBoxManage CLI only")
-        print("=" * 60)
+                print(f"Guest Properties: VBoxManage CLI only")
+        if self.network_mode:
+            print(f"Network Mode: Enabled (HTTP server on port {self.http_port})")
+            print(f"  → macOS guests: Use --host <host-ip> on guest client")
+            print(f"  → Linux/Windows: Can use Guest Properties OR network mode")
+        print("=" * 70)
         print("\nStarting GPS location sharing...")
         print("Press Ctrl+C to stop\n")
         
@@ -231,6 +318,8 @@ class VBoxGPSService:
                 time.sleep(self.interval)
         except KeyboardInterrupt:
             print("\n\nStopping GPS service...")
+            if self.network_mode:
+                self._stop_http_server()
             print("Service stopped.")
 
 
@@ -255,13 +344,26 @@ def main():
         default=5,
         help='Update interval in seconds (default: 5)'
     )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=8089,
+        help='HTTP server port for network mode (default: 8089)'
+    )
+    parser.add_argument(
+        '--no-network',
+        action='store_true',
+        help='Disable network mode (Guest Properties only)'
+    )
     
     args = parser.parse_args()
     
     service = VBoxGPSService(
         vm_name=args.vm,
         demo_mode=args.demo,
-        interval=args.interval
+        interval=args.interval,
+        network_mode=not args.no_network,
+        http_port=args.port
     )
     service.run()
 

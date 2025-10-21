@@ -24,3 +24,7 @@ args = "python demo.py --duration 60 --interval 5"
 
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[ports]]
+localPort = 8089
+externalPort = 80
